@@ -2,7 +2,7 @@
 // @name            哔哩哔哩——学习模式
 // @name:en         Bilibili-Leaner
 // @namespace       http://tampermonkey.net/
-// @version         1.1
+// @version         1.2
 // @description     屏蔽特定标签的视频，并替换成“滚去学习”字样
 // @description:en  Block videos with specific tags and replace them with the message "Go study."
 // @author          GooZy
@@ -17,6 +17,7 @@
 // @grant           GM_registerMenuCommand
 // ==/UserScript==
 
+const SEPERATE = ' '; // 标签分隔符
 
 (function() {
     'use strict';
@@ -26,13 +27,12 @@
 
     // 获取配置
     const savedConfig = getSavedConfig();
-    const allowedTags = savedConfig.allowedTags.split(' ').map(tag => tag.trim());
-    const blockedTimes = savedConfig.blockedTime.split(' ').map(time => time.trim());
+    console.log("配置：", savedConfig);
 
     // 是否可见标签
-    var isAvaliableTag = checkVideoTagAvaliable(allowedTags)
+    var isAvaliableTag = checkVideoTagAvaliable(savedConfig.allowedTags)
     // 是否可用时段
-    var isAvaliableTime = checkTimeAvaliable(blockedTimes)
+    var isAvaliableTime = checkTimeAvaliable(savedConfig.blockedTime)
 
     console.log("时段校验结果：", isAvaliableTime, "标签校验结果：", isAvaliableTag)
     if (isAvaliableTime || isAvaliableTag) {
@@ -88,14 +88,50 @@ function processHideVideo() {
 }
 
 function getSavedConfig() {
-    const allowedTags = GM_getValue('allowedTags', '');
-    const blockedTime = GM_getValue('blockedTime', '');
-    console.log("allowTags:", allowedTags, "blockedTime:", blockedTime)
-    return { allowedTags, blockedTime };
+    const allowedTags = GM_getValue('allowedTags', '').split(SEPERATE).map(tag => tag.trim());
+    const blockedTime = GM_getValue('blockedTime', '').split(SEPERATE).map(timeRange => timeRange.trim());
+    const quickTagOption = GM_getValue('quickTagOption', false);
+    return { allowedTags, blockedTime, quickTagOption };
+}
+
+// 编辑标签
+function editTagToAllowedList(tagName, remove = false) {
+    const savedConfig = getSavedConfig();
+    const allowedTags = savedConfig.allowedTags || [];
+
+    if (remove) {
+        const index = allowedTags.indexOf(tagName);
+        if (index !== -1) {
+            allowedTags.splice(index, 1);
+            GM_setValue('allowedTags', allowedTags.join(SEPERATE));
+        }
+        return;
+    }
+
+    if (!allowedTags.includes(tagName)) {
+        allowedTags.push(tagName);
+        GM_setValue('allowedTags', allowedTags.join(SEPERATE));
+    }
 }
 
 function initConfigPage() {
 
+    GM_registerMenuCommand(getLocalizedText("configCommand"), openConfigModal);
+
+    const config = getSavedConfig();
+    if (config.quickTagOption) {
+        console.log("启用快速标签处理");
+        // 为每个具有 'tag not-btn-tag' 类的元素添加右键点击事件监听器
+        document.querySelectorAll('.tag.not-btn-tag').forEach(tag => {
+            tag.addEventListener('contextmenu', function(event) {
+                event.preventDefault(); // 阻止默认的右键菜单
+                const tagName = this.innerText.trim(); // 获取标签名
+                showCustomConfirmationDialog(tagName);
+            });
+        });
+    }
+
+    // 一些函数定义
     function openConfigModal() {
         const existingModal = document.getElementById('configModal');
         if (!existingModal) {
@@ -105,31 +141,32 @@ function initConfigPage() {
 
             const saveConfigBtn = document.getElementById('saveConfigBtn');
             const cancelConfigBtn = document.getElementById('cancelConfigBtn');
+            const quickTagBtn = document.getElementById('quickTagOption');
             const tagInputContainer = document.getElementById('tagInputContainer');
             const timeInputContainer = document.getElementById('timeInputContainer');
             const allowedTagsInput = document.getElementById('allowedTagsInput');
             const blockedTimeInput = document.getElementById('blockedTime');
 
+            // 初始化值
             const savedConfig = getSavedConfig();
-            const allowedTags = savedConfig.allowedTags.split(' ');
-            const blockedTimes = savedConfig.blockedTime.split(' ');
-
-            allowedTags.forEach(tag => {
+            savedConfig.allowedTags.forEach(tag => {
                 const tagElement = document.createElement('div');
                 tagElement.className = 'tag';
                 tagElement.textContent = tag;
                 tagInputContainer.appendChild(tagElement);
             });
-            blockedTimes.forEach(time => {
+            savedConfig.blockedTime.forEach(time => {
                 const tagElement = document.createElement('div');
                 tagElement.className = 'tag';
                 tagElement.textContent = time;
                 timeInputContainer.appendChild(tagElement);
             });
 
-            allowedTagsInput.value = savedConfig.allowedTags;
-            blockedTimeInput.value = savedConfig.blockedTime;
+            allowedTagsInput.value = savedConfig.allowedTags.join(SEPERATE);
+            blockedTimeInput.value = savedConfig.blockedTime.join(SEPERATE);
+            quickTagBtn.checked = savedConfig.quickTagOption;
 
+            // 注册事件
             saveConfigBtn.addEventListener('click', saveConfig);
             cancelConfigBtn.addEventListener('click', closeConfigModal);
             allowedTagsInput.addEventListener('input', updateTags);
@@ -139,7 +176,7 @@ function initConfigPage() {
 
     function updateTags(event) {
         const tagInputContainer = document.getElementById('tagInputContainer');
-        const tags = event.target.value.split(' ').filter(tag => tag.trim() !== '');
+        const tags = event.target.value.split(SEPERATE).filter(tag => tag.trim() !== '');
 
         tagInputContainer.innerHTML = '';
 
@@ -153,7 +190,7 @@ function initConfigPage() {
 
     function updateTimes(event) {
         const timeInputContainer = document.getElementById('timeInputContainer');
-        const tags = event.target.value.split(' ').filter(tag => tag.trim() !== '');
+        const tags = event.target.value.split(SEPERATE).filter(tag => tag.trim() !== '');
 
         timeInputContainer.innerHTML = '';
 
@@ -168,9 +205,11 @@ function initConfigPage() {
     function saveConfig() {
         const allowedTagsInput = document.getElementById('allowedTagsInput');
         const blockedTimeInput = document.getElementById('blockedTime');
+        const quickTagOption = document.getElementById('quickTagOption');
 
-        GM_setValue('allowedTags', allowedTagsInput.value);
+        GM_setValue('allowedTags', allowedTagsInput.value.trim());
         GM_setValue('blockedTime', blockedTimeInput.value.trim());
+        GM_setValue('quickTagOption', quickTagOption.checked);
 
         closeConfigModal();
     }
@@ -182,7 +221,90 @@ function initConfigPage() {
         }
     }
 
-    GM_registerMenuCommand(getLocalizedText("configCommand"), openConfigModal);
+    // 显示自定义确认对话框的函数
+    function showCustomConfirmationDialog(tagName) {
+        const dialog = document.createElement('div');
+        dialog.innerHTML = `
+            <style>
+                .tag-input {
+                    display: flex;
+                    flex-wrap: wrap;
+                    align-items: center;
+                    border: 1px solid #ccc;
+                    padding: 5px;
+                }
+
+                .tag-container {
+                    display: inline-block;
+                    width: auto;
+                    border: none;
+                    outline: none;
+                    background-color: transparent;
+                    font-size: 14px;
+                }
+
+                .tag {
+                    background-color: #f0f0f0;
+                    padding: 2px 5px;
+                    border-radius: 3px;
+                    margin: 2px;
+                    display: inline-block;
+                }
+
+                #configModal {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(255, 255, 255, 0.9);
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 9999;
+                }
+
+                #configContainer {
+                    background: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    max-width: 400px;
+                    text-align: center;
+                }
+            </style>
+
+            <div id="configModal">
+                <div id="configContainer">
+                    <h3 style="margin-bottom: 20px;">${getLocalizedText("selectTagPrompt")}${tagName}</h3>
+
+                    <button id="addButton" style="margin-right: 10px;">${getLocalizedText("add")}</button>
+                    <button id="deleteButton" style="margin-right: 10px;">${getLocalizedText("delete")}</button>
+                    <button id="cancelButton">${getLocalizedText("cancel")}</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(dialog);
+
+        const addButton = dialog.querySelector('#addButton');
+        addButton.addEventListener('click', () => {
+            editTagToAllowedList(tagName); // 添加标签到允许列表
+            location.reload();
+            dialog.remove(); // 移除对话框
+        });
+
+        const deleteButton = dialog.querySelector('#deleteButton');
+        deleteButton.addEventListener('click', () => {
+            editTagToAllowedList(tagName, true); // 添加标签到允许列表
+            location.reload();
+            dialog.remove(); // 移除对话框
+        });
+
+        const cancelButton = dialog.querySelector('#cancelButton');
+        cancelButton.addEventListener('click', () => {
+            dialog.remove(); // 移除对话框
+        });
+    }
 
     function getConfigPage() {
         return `
@@ -193,6 +315,15 @@ function initConfigPage() {
                 align-items: center;
                 border: 1px solid #ccc;
                 padding: 5px;
+            }
+
+            .tag-checkbox {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: left;
+                border: 1px solid #ccc;
+                padding: 5px;
+                gap: 5px;
             }
 
             .tag-container {
@@ -238,13 +369,21 @@ function initConfigPage() {
             <div id="configContainer">
                 <h3 style="margin-bottom: 20px;">${getLocalizedText("configTitle")}</h3>
 
-                <label for="blockedTime">${getLocalizedText("blockedTimeLabel")}:</label><br>
+                <label for="blockedTime">${getLocalizedText("blockedTimeLabel")}</label><br>
                 <input type="text" id="blockedTime" style="width: 100%;"><br>
                 <div id="timeInputContainer" class="tag-container" style="width: 100%;"></div><br>
 
-                <label for="allowedTagsInput">${getLocalizedText("allowedTagsLabel")}:</label><br>
+                <label for="allowedTagsInput">${getLocalizedText("allowedTagsLabel")}</label><br>
                 <input type="text" id="allowedTagsInput" class="tag-input" style="width: 100%;">
                 <div id="tagInputContainer" class="tag-container" style="width: 100%;"></div><br>
+
+                <label for="allowedTagsInput">${getLocalizedText("quickTagOptionHelp")}</label><br>
+                <div id="tagOptionsContainer" class="tag-checkbox">
+                    <label for="quickTagOption">
+                        ${getLocalizedText("quickTagOptionLabel")}
+                    </label>
+                    <input type="checkbox" id="quickTagOption">
+                </div><br>
 
                 <button id="saveConfigBtn" style="margin-right: 10px;">${getLocalizedText("saveConfigBtn")}</button>
                 <button id="cancelConfigBtn">${getLocalizedText("cancelConfigBtn")}</button>
@@ -261,7 +400,7 @@ function getLocalizedText(key) {
     const preferredLanguage = userLanguages.find(lang => lang.startsWith('zh')) || 'en'; // 如果找不到中文，就使用英文
     // 提取语言参数（例如：zh-CN -> zh）
     const languageParam = preferredLanguage.substring(0, 2);
-    
+
     const translations = {
         "configTitle": {
             "zh": "配置学习模式",
@@ -290,6 +429,30 @@ function getLocalizedText(key) {
         "configCommand": {
             "zh": "配置学习模式",
             "en": "Configure Learning Mode"
+        },
+        "add": {
+            "zh": "添加",
+            "en": "Add"
+        },
+        "delete": {
+            "zh": "删除",
+            "en": "Delete"
+        },
+        "cancel": {
+            "zh": "取消",
+            "en": "Cancel"
+        },
+        "selectTagPrompt": {
+            "zh": "当前标签：",
+            "en": "Current tag: "
+        },
+        "quickTagOptionLabel": {
+            "zh": "快速处理标签：",
+            "en": "Quick tag processing: "
+        },
+        "quickTagOptionHelp": {
+            "zh": "开启快速处理标签选项后，鼠标右键点击视频标签可快速添加或删除标签",
+            "en": "Enable the quick tag processing option, and you can quickly add or remove tags by right-clicking the video tags."
         }
     };
 
